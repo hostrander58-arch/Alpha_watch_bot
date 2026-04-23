@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: alpha-watch-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false        # you fill this in Render dashboard
+      - key: CHAT_ID
+        sync: false        # you fill this in Render dashboard
+      - key: POLL_INTERVAL
+        value: "60"
+      - key: VOL_MULTIPLIER
+        value: "5"
+      - key: PRICE_PCT
+        value: "10"
+      - key: COOLDOWN_HOURS
+        value: "4"
+      - key: MIN_MCAP
+        value: "1000000"
