@@ -50,13 +50,13 @@ app = None
 def fp(p):
 try:
 n = float(p)
-if n == 0:       return “—”
+if n == 0:       return “–”
 if n < 0.000001: return f”${n:.2e}”
 if n < 0.01:     return f”${n:.6f}”
 if n < 1:        return f”${n:.4f}”
 if n < 1000:     return f”${n:.2f}”
 return f”${n:,.0f}”
-except: return “—”
+except: return “–”
 
 def fv(v):
 try:
@@ -65,7 +65,7 @@ if n >= 1e9: return f”${n/1e9:.1f}B”
 if n >= 1e6: return f”${n/1e6:.1f}M”
 if n >= 1e3: return f”${n/1e3:.0f}K”
 return f”${n:.0f}”
-except: return “—”
+except: return “–”
 
 def fpct(n):
 return f”{’+’if n>=0 else ‘’}{n:.1f}%”
@@ -274,11 +274,11 @@ for t in tokens:
     vol_accel = ((cur_v - prev_v) / prev_v * 100) if prev_v > 0 else 0
     vol_accelerating = vol_accel >= VOL_ACCEL_PCT and vs
 
-    # ── 6. Token age filter — skip price alerts for very new tokens ──
+    # ── 6. Token age filter -- skip price alerts for very new tokens ──
     if watched < NEW_TOKEN_HOURS:
         pp = False
 
-    # ── 9. Deduplication — if momentum fires, suppress solo alerts ──
+    # ── 9. Deduplication -- if momentum fires, suppress solo alerts ──
     momentum_fired = tid in last_alerted_momentum and not is_cooled_down(last_alerted_momentum, tid)
 
     # 🚀 MOMENTUM
@@ -398,7 +398,7 @@ if known_ids is None:
     for t in tokens:
         baselines[t["tokenId"]] = make_base(t)
         prev_volumes[t["tokenId"]] = float(t.get("volume24h", 0) or 0)
-        # Pre-mark already-graduated tokens — never alert on these
+        # Pre-mark already-graduated tokens -- never alert on these
         if bool(t.get("listingCex", False)):
             alerted_graduated.add(t["tokenId"])
             graduated_ids.add(t["tokenId"])
@@ -439,7 +439,7 @@ for t in tokens:
             f"Market Cap: {fv(t.get('marketCap'))}\n"
             f"24h Volume: {fv(t.get('volume24h'))}\n"
             f"Holders: {int(t.get('holders',0) or 0):,}\n\n"
-            f"📡 Baseline set — watching for momentum\n"
+            f"📡 Baseline set -- watching for momentum\n"
             f"📊 <a href='{trade_link(sym)}'>View {sym} on Binance Alpha</a>\n"
             f"🕐 {now_str()}"
         )
@@ -466,18 +466,18 @@ await u.message.reply_text(
 “🎓 Graduation to Binance Spot\n”
 “🌅 Daily 9am UTC briefing\n\n”
 “<b>Commands:</b>\n”
-“/status — live stats\n”
-“/signals — active signals\n”
-“/top — top movers now\n”
-“/price SYM — instant price lookup\n”
-“/settings — thresholds”,
+“/status – live stats\n”
+“/signals – active signals\n”
+“/top – top movers now\n”
+“/price SYM – instant price lookup\n”
+“/settings – thresholds”,
 parse_mode=“HTML”
 )
 
 async def cmd_status(u: Update, c: ContextTypes.DEFAULT_TYPE):
 vol_ages = [b.get(“volume_updated”) for b in baselines.values() if b.get(“volume_updated”)]
 last_refresh = min(vol_ages) if vol_ages else None
-next_refresh = (last_refresh + timedelta(hours=24)).strftime(”%H:%M UTC”) if last_refresh else “—”
+next_refresh = (last_refresh + timedelta(hours=24)).strftime(”%H:%M UTC”) if last_refresh else “–”
 await u.message.reply_text(
 f”📊 <b>Alpha Watch Status</b>\n”
 f”━━━━━━━━━━━━━━━\n”
@@ -526,7 +526,7 @@ lines.append(f”<b>{sym}</b> {fpct(chg)} | {fp(t.get(‘price’))} | {days_ago
 await u.message.reply_text(”\n”.join(lines), parse_mode=“HTML”, disable_web_page_preview=True)
 
 async def cmd_price(u: Update, c: ContextTypes.DEFAULT_TYPE):
-“”“7. /price SYM — instant price lookup”””
+“”“7. /price SYM – instant price lookup”””
 args = c.args
 if not args:
 await u.message.reply_text(“Usage: /price SYMBOL\nExample: /price TRIA”)
@@ -543,7 +543,7 @@ cur_p  = float(match.get(“price”, 0) or 0)
 entry  = base.get(“price”, 0)
 since_entry = ((cur_p - entry) / entry * 100) if entry > 0 else 0
 await u.message.reply_text(
-f”💹 <b>{sym}</b> — {match.get(‘name’,’’)}\n”
+f”💹 <b>{sym}</b> – {match.get(‘name’,’’)}\n”
 f”━━━━━━━━━━━━━━━\n”
 f”Price: <b>{fp(cur_p)}</b>\n”
 f”24h Change: {fpct(float(match.get(‘percentChange24h’, 0) or 0))}\n”
