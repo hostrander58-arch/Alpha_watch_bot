@@ -10,7 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 logging.basicConfig(format=”%(asctime)s [%(levelname)s] %(message)s”, level=logging.INFO)
 log = logging.getLogger(**name**)
 
-# ── Config ──
+# – Config –
 
 TELEGRAM_TOKEN  = os.environ[“TELEGRAM_TOKEN”]
 CHAT_ID         = os.environ[“CHAT_ID”]
@@ -28,13 +28,13 @@ NEW_TOKEN_HOURS = float(os.environ.get(“NEW_TOKEN_HOURS”,   “6”))  # 6. 
 
 BINANCE_API = “https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list”
 
-# ── State ──
+# – State –
 
 known_ids             = None
 baselines             = {}
 token_map             = {}
-prev_volumes          = {}   # tokenId → volume from last poll (for acceleration)
-pending_signals       = {}   # tokenId → {type: count} for confirmation
+prev_volumes          = {}   # tokenId  volume from last poll (for acceleration)
+pending_signals       = {}   # tokenId  {type: count} for confirmation
 last_alerted_momentum = {}
 last_alerted_volume   = {}
 last_alerted_price    = {}
@@ -45,7 +45,7 @@ graduated_ids         = set()
 cnt_new = cnt_vol = cnt_price = cnt_momentum = cnt_grad = cnt_holders = 0
 app = None
 
-# ── Formatters ──
+# – Formatters –
 
 def fp(p):
 try:
@@ -132,7 +132,7 @@ return {
 “cex_listed”:     bool(t.get(“listingCex”, False)),
 }
 
-# ── Confirmation helper ──
+# – Confirmation helper –
 
 def confirm_signal(tid, sig_type):
 “”“Returns True when signal has been seen CONFIRM_POLLS times in a row.”””
@@ -143,7 +143,7 @@ return pending_signals[key] >= CONFIRM_POLLS
 def reset_signal(tid, sig_type):
 pending_signals.pop(f”{tid}:{sig_type}”, None)
 
-# ── 24h volume refresh ──
+# – 24h volume refresh –
 
 async def refresh_volume_baselines():
 count = 0
@@ -157,18 +157,18 @@ baselines[tid][“volume_updated”] = datetime.utcnow()
 count += 1
 log.info(f”Volume baselines refreshed for {count} tokens.”)
 await send(
-f”🔄 <b>Volume Baselines Refreshed</b>\n”
-f”━━━━━━━━━━━━━━━\n”
+f” <b>Volume Baselines Refreshed</b>\n”
+f”—————\n”
 f”Updated {count} token baselines to current 24h volume.\n”
-f”🕐 {now_str()}”
+f” {now_str()}”
 )
 except Exception as e:
 log.error(f”Volume refresh failed: {e}”)
 
-# ── Daily 9am briefing ── (8. daily briefing)
+# – Daily 9am briefing – (8. daily briefing)
 
 async def daily_briefing():
-lines = [f”🌅 <b>Daily Alpha Briefing</b>\n━━━━━━━━━━━━━━━\n🕐 {now_str()}\n”]
+lines = [f” <b>Daily Alpha Briefing</b>\n—————\n {now_str()}\n”]
 
 ```
 # New listings in last 24h
@@ -177,7 +177,7 @@ recent_new = [
     if b.get("listed_date") and (datetime.utcnow() - b["listed_date"]).total_seconds() < 86400
     and b["symbol"] in {t["symbol"].upper() for t in token_map.values() if t["tokenId"] in new_session_ids}
 ]
-lines.append(f"⚡ <b>New listings (24h):</b> {len(recent_new)}")
+lines.append(f" <b>New listings (24h):</b> {len(recent_new)}")
 
 # Top 5 movers
 sorted_tokens = sorted(
@@ -185,27 +185,27 @@ sorted_tokens = sorted(
     key=lambda t: float(t.get("percentChange24h", 0) or 0),
     reverse=True
 )
-lines.append(f"\n🔥 <b>Top 5 movers:</b>")
+lines.append(f"\n <b>Top 5 movers:</b>")
 for t in sorted_tokens[:5]:
     sym = t["symbol"].upper()
     chg = float(t.get("percentChange24h", 0) or 0)
-    lines.append(f"  • <b>{sym}</b> {fpct(chg)} | {fp(t.get('price'))}")
+    lines.append(f"   <b>{sym}</b> {fpct(chg)} | {fp(t.get('price'))}")
 
 # Signals summary
-lines.append(f"\n📊 <b>Session totals:</b>")
+lines.append(f"\n <b>Session totals:</b>")
 lines.append(f"  New: {cnt_new} | Vol: {cnt_vol} | Price: {cnt_price}")
 lines.append(f"  Momentum: {cnt_momentum} | Grad: {cnt_grad} | Holders: {cnt_holders}")
 
 # Graduations
 if graduated_ids:
     grad_syms = [baselines.get(tid, {}).get("symbol", tid) for tid in graduated_ids]
-    lines.append(f"\n🎓 <b>Graduated:</b> {', '.join(grad_syms)}")
+    lines.append(f"\n <b>Graduated:</b> {', '.join(grad_syms)}")
 
 await send("\n".join(lines))
 log.info("Daily briefing sent.")
 ```
 
-# ── Graduation detection ──
+# – Graduation detection –
 
 async def detect_graduations(tokens):
 global cnt_grad
@@ -222,8 +222,8 @@ baselines[tid][“cex_listed”] = True
 listed = baselines[tid].get(“listed_date”)
 days_on = (datetime.utcnow() - listed).days if listed else “?”
 await send(
-f”🎓 <b>GRADUATED TO BINANCE SPOT!</b>\n”
-f”━━━━━━━━━━━━━━━\n”
+f” <b>GRADUATED TO BINANCE SPOT!</b>\n”
+f”—————\n”
 f”Token: <b>{sym}</b> ({t.get(‘name’,’’)})\n”
 f”Chain: {t.get(‘chainName’,’’)}\n\n”
 f”Listed on Alpha: {date_str(listed)}\n”
@@ -231,14 +231,14 @@ f”Days on Alpha: <b>{days_on}</b>\n\n”
 f”Price: {fp(t.get(‘price’))}\n”
 f”Market Cap: {fv(t.get(‘marketCap’))}\n”
 f”24h Volume: {fv(t.get(‘volume24h’))}\n\n”
-f”📊 <a href='{trade_link(sym)}'>Trade {sym} on Binance</a>\n”
-f”🕐 {now_str()}”
+f” <a href='{trade_link(sym)}'>Trade {sym} on Binance</a>\n”
+f” {now_str()}”
 )
 log.info(f”GRADUATED: {sym}”)
 else:
 baselines[tid][“cex_listed”] = now_cex
 
-# ── Signal detection ──
+# – Signal detection –
 
 async def detect_signals(tokens):
 global cnt_vol, cnt_price, cnt_momentum, cnt_holders
@@ -257,7 +257,7 @@ for t in tokens:
     listed  = base.get("listed_date")
     watched = hours_watched(tid)
 
-    # ── 1. Minimum volume filter ──
+    # -- 1. Minimum volume filter --
     if cur_v < MIN_VOL_USD:
         reset_signal(tid, "vol")
         reset_signal(tid, "momentum")
@@ -269,19 +269,19 @@ for t in tokens:
     pp = pg >= PRICE_PCT and watched >= WATCH_HOURS  # 2. watching period
     lk = trade_link(sym)
 
-    # ── 5. Volume acceleration ──
+    # -- 5. Volume acceleration --
     prev_v = prev_volumes.get(tid, cur_v)
     vol_accel = ((cur_v - prev_v) / prev_v * 100) if prev_v > 0 else 0
     vol_accelerating = vol_accel >= VOL_ACCEL_PCT and vs
 
-    # ── 6. Token age filter -- skip price alerts for very new tokens ──
+    # -- 6. Token age filter -- skip price alerts for very new tokens --
     if watched < NEW_TOKEN_HOURS:
         pp = False
 
-    # ── 9. Deduplication -- if momentum fires, suppress solo alerts ──
+    # -- 9. Deduplication -- if momentum fires, suppress solo alerts --
     momentum_fired = tid in last_alerted_momentum and not is_cooled_down(last_alerted_momentum, tid)
 
-    # 🚀 MOMENTUM
+    #  MOMENTUM
     if vs and pp and is_cooled_down(last_alerted_momentum, tid):
         if confirm_signal(tid, "momentum"):
             reset_signal(tid, "momentum")
@@ -292,69 +292,69 @@ for t in tokens:
             # 9. suppress solo alerts
             last_alerted_volume[tid] = datetime.utcnow()
             last_alerted_price[tid]  = datetime.utcnow()
-            accel_note = f"\n⚡ Vol accelerating +{vol_accel:.0f}% this poll!" if vol_accelerating else ""
+            accel_note = f"\n Vol accelerating +{vol_accel:.0f}% this poll!" if vol_accelerating else ""
             await send(
-                f"🚀 <b>MOMENTUM ALERT</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
+                f" <b>MOMENTUM ALERT</b>\n"
+                f"---------------\n"
                 f"Token: <b>{sym}</b> ({base.get('name','')})\n"
                 f"Listed on Alpha: {date_str(listed)} ({days_ago(listed)})\n"
                 f"Watched for: {watched:.1f}h\n"
                 f"{accel_note}\n"
-                f"📈 Vol: <b>{vr:.1f}×</b> baseline | {fv(base['volume'])} → {fv(cur_v)}\n"
-                f"💰 Price: <b>{fpct(pg)}</b> from entry | {fp(base['price'])} → {fp(cur_p)}\n\n"
-                f"📊 <a href='{lk}'>Trade {sym} on Binance</a>\n"
-                f"🕐 {now_str()}"
+                f" Vol: <b>{vr:.1f}</b> baseline | {fv(base['volume'])}  {fv(cur_v)}\n"
+                f" Price: <b>{fpct(pg)}</b> from entry | {fp(base['price'])}  {fp(cur_p)}\n\n"
+                f" <a href='{lk}'>Trade {sym} on Binance</a>\n"
+                f" {now_str()}"
             )
             log.info(f"MOMENTUM: {sym}")
     else:
         if not (vs and pp): reset_signal(tid, "momentum")
 
-    # 📈 VOLUME (skip if momentum recently fired)
+    #  VOLUME (skip if momentum recently fired)
     if vs and not momentum_fired and is_cooled_down(last_alerted_volume, tid):
         if confirm_signal(tid, "vol"):
             reset_signal(tid, "vol")
             if tid not in last_alerted_volume: cnt_vol += 1
             mark_alerted(last_alerted_volume, tid)
-            accel_note = f"\n⚡ Accelerating +{vol_accel:.0f}% this poll!" if vol_accelerating else ""
+            accel_note = f"\n Accelerating +{vol_accel:.0f}% this poll!" if vol_accelerating else ""
             await send(
-                f"📈 <b>VOLUME SPIKE</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
+                f" <b>VOLUME SPIKE</b>\n"
+                f"---------------\n"
                 f"Token: <b>{sym}</b> ({base.get('name','')})\n"
                 f"Listed on Alpha: {date_str(listed)} ({days_ago(listed)})\n"
                 f"{accel_note}\n"
-                f"Vol: <b>{vr:.1f}×</b> baseline\n"
-                f"{fv(base['volume'])} → {fv(cur_v)}\n"
+                f"Vol: <b>{vr:.1f}</b> baseline\n"
+                f"{fv(base['volume'])}  {fv(cur_v)}\n"
                 f"Price: {fp(cur_p)} ({fpct(pg)} from entry)\n\n"
-                f"📊 <a href='{lk}'>Trade {sym} on Binance</a>\n"
-                f"🕐 {now_str()}"
+                f" <a href='{lk}'>Trade {sym} on Binance</a>\n"
+                f" {now_str()}"
             )
             log.info(f"VOLUME: {sym}")
     else:
         if not vs: reset_signal(tid, "vol")
 
-    # 💰 PRICE (skip if momentum recently fired)
+    #  PRICE (skip if momentum recently fired)
     if pp and not momentum_fired and is_cooled_down(last_alerted_price, tid):
         if confirm_signal(tid, "price"):
             reset_signal(tid, "price")
             if tid not in last_alerted_price: cnt_price += 1
             mark_alerted(last_alerted_price, tid)
             await send(
-                f"💰 <b>PRICE PUMP</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
+                f" <b>PRICE PUMP</b>\n"
+                f"---------------\n"
                 f"Token: <b>{sym}</b> ({base.get('name','')})\n"
                 f"Listed on Alpha: {date_str(listed)} ({days_ago(listed)})\n"
                 f"Watched for: {watched:.1f}h\n\n"
                 f"Up <b>{fpct(pg)}</b> from entry\n"
-                f"{fp(base['price'])} → {fp(cur_p)}\n"
+                f"{fp(base['price'])}  {fp(cur_p)}\n"
                 f"Volume: {fv(cur_v)}\n\n"
-                f"📊 <a href='{lk}'>Trade {sym} on Binance</a>\n"
-                f"🕐 {now_str()}"
+                f" <a href='{lk}'>Trade {sym} on Binance</a>\n"
+                f" {now_str()}"
             )
             log.info(f"PRICE: {sym}")
     else:
         if not pp: reset_signal(tid, "price")
 
-    # 👥 HOLDERS GROWTH (4.)
+    #  HOLDERS GROWTH (4.)
     base_h = base.get("holders", 0)
     if base_h > 0 and cur_h > 0:
         h_growth = ((cur_h - base_h) / base_h) * 100
@@ -362,16 +362,16 @@ for t in tokens:
             mark_alerted(last_alerted_holders, tid)
             cnt_holders += 1
             await send(
-                f"👥 <b>HOLDERS SURGE</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
+                f" <b>HOLDERS SURGE</b>\n"
+                f"---------------\n"
                 f"Token: <b>{sym}</b> ({base.get('name','')})\n"
                 f"Listed on Alpha: {date_str(listed)} ({days_ago(listed)})\n\n"
                 f"Holders up <b>{fpct(h_growth)}</b>\n"
-                f"{base_h:,} → {cur_h:,} holders\n"
+                f"{base_h:,}  {cur_h:,} holders\n"
                 f"Price: {fp(cur_p)} | Vol: {fv(cur_v)}\n\n"
-                f"⚠️ Early accumulation signal\n"
-                f"📊 <a href='{lk}'>View {sym} on Binance</a>\n"
-                f"🕐 {now_str()}"
+                f" Early accumulation signal\n"
+                f" <a href='{lk}'>View {sym} on Binance</a>\n"
+                f" {now_str()}"
             )
             log.info(f"HOLDERS: {sym} +{h_growth:.1f}%")
 
@@ -380,7 +380,7 @@ for t in tokens:
     prev_volumes[tid] = cur_v
 ```
 
-# ── Main poll ──
+# – Main poll –
 
 async def poll_job():
 global known_ids, cnt_new
@@ -405,15 +405,15 @@ if known_ids is None:
     already_grad = len(alerted_graduated)
     log.info(f"Baselines set for {len(tokens)} tokens. Suppressed {already_grad} already-graduated tokens.")
     await send(
-        f"✅ <b>Alpha Watch Bot is live!</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
+        f" <b>Alpha Watch Bot is live!</b>\n"
+        f"---------------\n"
         f"Tracking <b>{len(tokens)}</b> tokens (min ${MIN_MCAP/1e6:.0f}M mcap)\n"
-        f"Poll: <b>{POLL_INTERVAL}s</b> | Vol: <b>{VOL_MULTIPLIER}×</b> | Price: <b>+{PRICE_PCT}%</b>\n"
+        f"Poll: <b>{POLL_INTERVAL}s</b> | Vol: <b>{VOL_MULTIPLIER}</b> | Price: <b>+{PRICE_PCT}%</b>\n"
         f"Min volume: <b>{fv(MIN_VOL_USD)}</b> | Watch period: <b>{WATCH_HOURS}h</b>\n"
         f"Confirmation: <b>{CONFIRM_POLLS} polls</b> | Age filter: <b>{NEW_TOKEN_HOURS}h</b>\n"
         f"Vol refresh: every <b>24h</b> | Briefing: <b>9am UTC daily</b>\n\n"
-        f"Signals: ⚡New · 📈Vol · 💰Price · 🚀Momentum · 👥Holders · 🎓Grad\n\n"
-        f"/status /signals /top /price /settings 📡"
+        f"Signals: New  Vol  Price  Momentum  Holders  Grad\n\n"
+        f"/status /signals /top /price /settings "
     )
     return
 
@@ -429,8 +429,8 @@ for t in tokens:
         baselines[tid] = make_base(t, listed_date=listed_date)
         prev_volumes[tid] = float(t.get("volume24h", 0) or 0)
         await send(
-            f"⚡ <b>NEW BINANCE ALPHA LISTING</b>\n"
-            f"━━━━━━━━━━━━━━━\n"
+            f" <b>NEW BINANCE ALPHA LISTING</b>\n"
+            f"---------------\n"
             f"Token: <b>{sym}</b>\n"
             f"Name: {t.get('name','')}\n"
             f"Chain: {t.get('chainName','')}\n\n"
@@ -439,9 +439,9 @@ for t in tokens:
             f"Market Cap: {fv(t.get('marketCap'))}\n"
             f"24h Volume: {fv(t.get('volume24h'))}\n"
             f"Holders: {int(t.get('holders',0) or 0):,}\n\n"
-            f"📡 Baseline set -- watching for momentum\n"
-            f"📊 <a href='{trade_link(sym)}'>View {sym} on Binance Alpha</a>\n"
-            f"🕐 {now_str()}"
+            f" Baseline set -- watching for momentum\n"
+            f" <a href='{trade_link(sym)}'>View {sym} on Binance Alpha</a>\n"
+            f" {now_str()}"
         )
         log.info(f"NEW LISTING: {sym}")
     elif tid not in baselines:
@@ -452,19 +452,19 @@ await detect_graduations(tokens)
 await detect_signals(tokens)
 ```
 
-# ── Commands ──
+# – Commands –
 
 async def cmd_start(u: Update, c: ContextTypes.DEFAULT_TYPE):
 await u.message.reply_text(
-“👋 <b>Alpha Watch Bot</b>\n\n”
+“ <b>Alpha Watch Bot</b>\n\n”
 “Monitoring Binance Alpha 24/7:\n\n”
-“⚡ New Alpha listings\n”
-“📈 Volume spikes (confirmed × 2 polls)\n”
-“💰 Price pumps (after 2h watch period)\n”
-“🚀 Momentum (vol + price together)\n”
-“👥 Holders surge (early accumulation)\n”
-“🎓 Graduation to Binance Spot\n”
-“🌅 Daily 9am UTC briefing\n\n”
+“ New Alpha listings\n”
+“ Volume spikes (confirmed  2 polls)\n”
+“ Price pumps (after 2h watch period)\n”
+“ Momentum (vol + price together)\n”
+“ Holders surge (early accumulation)\n”
+“ Graduation to Binance Spot\n”
+“ Daily 9am UTC briefing\n\n”
 “<b>Commands:</b>\n”
 “/status – live stats\n”
 “/signals – active signals\n”
@@ -479,21 +479,21 @@ vol_ages = [b.get(“volume_updated”) for b in baselines.values() if b.get(“
 last_refresh = min(vol_ages) if vol_ages else None
 next_refresh = (last_refresh + timedelta(hours=24)).strftime(”%H:%M UTC”) if last_refresh else “–”
 await u.message.reply_text(
-f”📊 <b>Alpha Watch Status</b>\n”
-f”━━━━━━━━━━━━━━━\n”
+f” <b>Alpha Watch Status</b>\n”
+f”—————\n”
 f”Tracking: <b>{len(baselines)}</b> tokens\n”
 f”New: <b>{cnt_new}</b> | Vol: <b>{cnt_vol}</b> | Price: <b>{cnt_price}</b>\n”
 f”Momentum: <b>{cnt_momentum}</b> | Holders: <b>{cnt_holders}</b> | Grad: <b>{cnt_grad}</b>\n\n”
-f”⏱ Poll: {POLL_INTERVAL}s | Confirm: {CONFIRM_POLLS} polls\n”
-f”📈 Vol: {VOL_MULTIPLIER}× | Min vol: {fv(MIN_VOL_USD)}\n”
-f”💰 Price: +{PRICE_PCT}% | Watch: {WATCH_HOURS}h | Age: {NEW_TOKEN_HOURS}h\n”
-f”🔄 Next vol refresh: {next_refresh}\n”
-f”🕐 {now_str()}”,
+f” Poll: {POLL_INTERVAL}s | Confirm: {CONFIRM_POLLS} polls\n”
+f” Vol: {VOL_MULTIPLIER} | Min vol: {fv(MIN_VOL_USD)}\n”
+f” Price: +{PRICE_PCT}% | Watch: {WATCH_HOURS}h | Age: {NEW_TOKEN_HOURS}h\n”
+f” Next vol refresh: {next_refresh}\n”
+f” {now_str()}”,
 parse_mode=“HTML”
 )
 
 async def cmd_signals(u: Update, c: ContextTypes.DEFAULT_TYPE):
-lines = [“📡 <b>Active Signals</b>\n━━━━━━━━━━━━━━━”]
+lines = [” <b>Active Signals</b>\n—————”]
 found = False
 for tid, t in token_map.items():
 sym  = t[“symbol”].upper()
@@ -505,7 +505,7 @@ is_h = tid in last_alerted_holders
 is_n = tid in new_session_ids and not any([is_m, is_v, is_p])
 if not any([is_m, is_v, is_p, is_g, is_h, is_n]): continue
 found = True
-icon = “🎓” if is_g else “🚀” if is_m else “📈” if is_v else “💰” if is_p else “👥” if is_h else “⚡”
+icon = “” if is_g else “” if is_m else “” if is_v else “” if is_p else “” if is_h else “”
 chg  = float(t.get(“percentChange24h”, 0) or 0)
 listed = baselines.get(tid, {}).get(“listed_date”)
 lines.append(f”{icon} <b>{sym}</b> {fpct(chg)} | {days_ago(listed)} | <a href='{trade_link(sym)}'>Trade</a>”)
@@ -515,9 +515,9 @@ await u.message.reply_text(”\n”.join(lines), parse_mode=“HTML”, disable_
 
 async def cmd_top(u: Update, c: ContextTypes.DEFAULT_TYPE):
 if not token_map:
-await u.message.reply_text(“Still loading…”); return
+await u.message.reply_text(“Still loading”); return
 tokens = sorted(token_map.values(), key=lambda t: float(t.get(“percentChange24h”, 0) or 0), reverse=True)
-lines = [“🔥 <b>Top Movers Right Now</b>\n━━━━━━━━━━━━━━━”]
+lines = [” <b>Top Movers Right Now</b>\n—————”]
 for t in tokens[:10]:
 sym  = t[“symbol”].upper()
 chg  = float(t.get(“percentChange24h”, 0) or 0)
@@ -543,8 +543,8 @@ cur_p  = float(match.get(“price”, 0) or 0)
 entry  = base.get(“price”, 0)
 since_entry = ((cur_p - entry) / entry * 100) if entry > 0 else 0
 await u.message.reply_text(
-f”💹 <b>{sym}</b> – {match.get(‘name’,’’)}\n”
-f”━━━━━━━━━━━━━━━\n”
+f” <b>{sym}</b> – {match.get(‘name’,’’)}\n”
+f”—————\n”
 f”Price: <b>{fp(cur_p)}</b>\n”
 f”24h Change: {fpct(float(match.get(‘percentChange24h’, 0) or 0))}\n”
 f”Since listing entry: {fpct(since_entry)}\n\n”
@@ -553,19 +553,19 @@ f”24h Volume: {fv(match.get(‘volume24h’))}\n”
 f”Holders: {int(match.get(‘holders’, 0) or 0):,}\n”
 f”Chain: {match.get(‘chainName’,’’)}\n\n”
 f”Listed on Alpha: {date_str(listed)} ({days_ago(listed)})\n\n”
-f”📊 <a href='{trade_link(sym)}'>Trade {sym} on Binance</a>”,
+f” <a href='{trade_link(sym)}'>Trade {sym} on Binance</a>”,
 parse_mode=“HTML”, disable_web_page_preview=True
 )
 
 async def cmd_settings(u: Update, c: ContextTypes.DEFAULT_TYPE):
 await u.message.reply_text(
-f”⚙️ <b>Current Settings</b>\n”
-f”━━━━━━━━━━━━━━━\n”
+f” <b>Current Settings</b>\n”
+f”—————\n”
 f”Min market cap: ${MIN_MCAP/1e6:.0f}M\n”
 f”Min volume: {fv(MIN_VOL_USD)}\n”
 f”Poll interval: {POLL_INTERVAL}s\n”
 f”Confirmation: {CONFIRM_POLLS} polls\n”
-f”Vol spike: {VOL_MULTIPLIER}×\n”
+f”Vol spike: {VOL_MULTIPLIER}\n”
 f”Vol acceleration: +{VOL_ACCEL_PCT}% per poll\n”
 f”Price pump: +{PRICE_PCT}%\n”
 f”Watch period: {WATCH_HOURS}h\n”
@@ -573,9 +573,9 @@ f”New token age filter: {NEW_TOKEN_HOURS}h\n”
 f”Holders surge: +{HOLDERS_PCT}%\n”
 f”Cool-down: {COOLDOWN_HOURS}h\n\n”
 f”Change in Railway env vars:\n”
-f”<code>MIN_MCAP · MIN_VOL_USD · VOL_MULTIPLIER · PRICE_PCT\n”
-f”POLL_INTERVAL · COOLDOWN_HOURS · WATCH_HOURS\n”
-f”CONFIRM_POLLS · HOLDERS_PCT · VOL_ACCEL_PCT · NEW_TOKEN_HOURS</code>”,
+f”<code>MIN_MCAP  MIN_VOL_USD  VOL_MULTIPLIER  PRICE_PCT\n”
+f”POLL_INTERVAL  COOLDOWN_HOURS  WATCH_HOURS\n”
+f”CONFIRM_POLLS  HOLDERS_PCT  VOL_ACCEL_PCT  NEW_TOKEN_HOURS</code>”,
 parse_mode=“HTML”
 )
 
@@ -596,7 +596,7 @@ scheduler.add_job(refresh_volume_baselines,  "interval", hours=24,              
 scheduler.add_job(daily_briefing,            "cron",     hour=9, minute=0,      id="briefing")
 scheduler.start()
 
-log.info("Alpha Watch Bot starting…")
+log.info("Alpha Watch Bot starting")
 async with app:
     await app.start()
     await poll_job()
