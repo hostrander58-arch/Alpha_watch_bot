@@ -7,6 +7,8 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram.ext import MessageHandler, filters
+import json
+import websockets
 
 logging.basicConfig(format=”%(asctime)s [%(levelname)s] %(message)s”, level=logging.INFO)
 log = logging.getLogger(**name**)
@@ -31,6 +33,13 @@ VOL_ACCEL_PCT   = float(os.environ.get(“VOL_ACCEL_PCT”,    “50”))  # 5. 
 NEW_TOKEN_HOURS = float(os.environ.get(“NEW_TOKEN_HOURS”,   “6”))  # 6. ignore price alerts < X hours old
 
 BINANCE_API = “https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list”
+
+# Hyperliquid whale monitoring
+
+HL_WS_URL       = “wss://api.hyperliquid.xyz/ws”
+HL_REST_URL     = “https://api.hyperliquid.xyz/info”
+MIN_WHALE_USD   = float(os.environ.get(“MIN_WHALE_USD”, “50000”))
+HL_ENABLED      = os.environ.get(“HL_ENABLED”, “true”).lower() == “true”
 
 # Binance official Telegram channels to monitor
 
@@ -64,6 +73,8 @@ new_session_ids       = set()
 graduated_ids         = set()
 cnt_new = cnt_vol = cnt_price = cnt_momentum = cnt_grad = cnt_holders = cnt_volmcap = cnt_sweetspot = cnt_announce = 0
 seen_announcement_ids = set()   # track message IDs so we don’t double-alert
+whale_alert_count = 0
+wallet_history = {}   # wallet -> list of recent trades for accumulation detection
 app = None
 
 # – Formatters –
@@ -548,7 +559,8 @@ f”Tracking: <b>{len(baselines)}</b> tokens\n”
 f”New: <b>{cnt_new}</b> | Vol: <b>{cnt_vol}</b> | Price: <b>{cnt_price}</b>\n”
 f”Momentum: <b>{cnt_momentum}</b> | Holders: <b>{cnt_holders}</b>\n”
 f”Vol/MCap: <b>{cnt_volmcap}</b> | Sweet spot: <b>{cnt_sweetspot}</b>\n”
-f”Grad: <b>{cnt_grad}</b> | Announcements: <b>{cnt_announce}</b>\n\n”
+f”Grad: <b>{cnt_grad}</b> | Announcements: <b>{cnt_announce}</b>\n”
+f”Whale alerts: <b>{whale_alert_count}</b>\n\n”
 f” Poll: {POLL_INTERVAL}s | Confirm: {CONFIRM_POLLS} polls\n”
 f” Vol: {VOL_MULTIPLIER} | Min vol: {fv(MIN_VOL_USD)}\n”
 f” Price: +{PRICE_PCT}% | Watch: {WATCH_HOURS}h | Age: {NEW_TOKEN_HOURS}h\n”
@@ -646,6 +658,107 @@ f”CONFIRM_POLLS  HOLDERS_PCT  VOL_ACCEL_PCT  NEW_TOKEN_HOURS</code>”,
 parse_mode=“HTML”
 )
 
+def hl_short(addr):
+if addr and len(addr) > 10:
+return addr[:6] + “…” + addr[-4:]
+return addr or “”
+
+async def hl_send_whale_alert(trade, cross_alpha=False):
+global whale_alert_count
+whale_alert_count += 1
+coin    = trade.get(“coin”, “”).upper()
+side    = trade.get(“side”, “”)
+size    = float(trade.get(“sz”, 0))
+price   = float(trade.get(“px”, 0))
+usd_val = size * price
+users   = trade.get(“users”, [])
+wallet  = users[0] if users else trade.get(“user”, “”)
+action  = “BUY” if side == “B” else “SELL”
+tag     = “ [ALPHA MATCH]” if cross_alpha else “”
+
+```
+if wallet:
+    if wallet not in wallet_history:
+        wallet_history[wallet] = []
+    wallet_history[wallet].append({
+        "coin": coin, "side": side,
+        "usd": usd_val, "time": datetime.utcnow()
+    })
+    wallet_history[wallet] = wallet_history[wallet][-10:]
+
+accum_note = ""
+if wallet and wallet in wallet_history:
+    recent_buys = [
+        t for t in wallet_history[wallet]
+        if t["coin"] == coin
+        and t["side"] == "B"
+        and (datetime.utcnow() - t["time"]).total_seconds() < 86400
+    ]
+    if len(recent_buys) >= 3:
+        total = sum(t["usd"] for t in recent_buys)
+        accum_note = "ACCUMULATION: " + str(len(recent_buys)) + " buys = " + fv(total) + " in 24h"
+
+lines = [
+    "HYPERLIQUID WHALE" + tag,
+    "---",
+    "Token: " + coin,
+    "Action: " + action + " " + fv(usd_val),
+    "Wallet: " + hl_short(wallet),
+    "Size: " + f"{size:,.0f}" + " " + coin,
+    "Price: " + fp(price),
+]
+if accum_note:
+    lines.append(accum_note)
+lines.append(now_str())
+await send("\n".join(lines))
+log.info("WHALE: " + action + " " + coin + " " + fv(usd_val))
+```
+
+async def hl_monitor_trades():
+if not HL_ENABLED:
+return
+log.info(“Connecting to Hyperliquid WebSocket…”)
+while True:
+try:
+async with websockets.connect(HL_WS_URL, ping_interval=30) as ws:
+await ws.send(json.dumps({
+“method”: “subscribe”,
+“subscription”: {“type”: “trades”, “coin”: “”}
+}))
+log.info(“Hyperliquid WebSocket connected”)
+await send(
+“HYPERLIQUID MONITOR ACTIVE\n”
+“—\n”
+“Watching all spot + perp trades\n”
+“Alert threshold: “ + fv(MIN_WHALE_USD) + “\n” +
+now_str()
+)
+async for raw in ws:
+try:
+data = json.loads(raw)
+if data.get(“channel”) != “trades”:
+continue
+trades = data.get(“data”, [])
+if isinstance(trades, dict):
+trades = [trades]
+for trade in trades:
+sz  = float(trade.get(“sz”, 0))
+px  = float(trade.get(“px”, 0))
+usd = sz * px
+if usd < MIN_WHALE_USD:
+continue
+coin = trade.get(“coin”, “”).upper()
+alpha_match = any(
+t.get(“symbol”, “”).upper() == coin
+for t in token_map.values()
+)
+await hl_send_whale_alert(trade, cross_alpha=alpha_match)
+except Exception as e:
+log.error(“HL parse error: “ + str(e))
+except Exception as e:
+log.error(“HL WebSocket error: “ + str(e) + “ - reconnecting in 10s”)
+await asyncio.sleep(10)
+
 async def handle_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 “”“Monitor Binance announcement channels for listing news.”””
 global cnt_announce
@@ -733,7 +846,11 @@ async with app:
     await app.start()
     await poll_job()
     await app.updater.start_polling(drop_pending_updates=True)
-    await asyncio.Event().wait()
+    # Run Hyperliquid monitor concurrently
+    await asyncio.gather(
+        asyncio.Event().wait(),
+        hl_monitor_trades()
+    )
 ```
 
 if **name** == “**main**”:
