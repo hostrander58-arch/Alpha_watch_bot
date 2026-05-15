@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram.ext import MessageHandler, filters
 
 logging.basicConfig(format=”%(asctime)s [%(levelname)s] %(message)s”, level=logging.INFO)
 log = logging.getLogger(**name**)
@@ -20,6 +21,9 @@ PRICE_PCT       = float(os.environ.get(“PRICE_PCT”,       “10”))
 COOLDOWN_HOURS  = float(os.environ.get(“COOLDOWN_HOURS”,   “4”))
 MIN_MCAP        = float(os.environ.get(“MIN_MCAP”,  “1000000”))
 MIN_VOL_USD     = float(os.environ.get(“MIN_VOL_USD”,  “50000”))  # 1. min volume filter
+VOL_MCAP_RATIO  = float(os.environ.get(“VOL_MCAP_RATIO”, “20”))   # vol/mcap ratio threshold %
+SWEET_SPOT_MIN  = float(os.environ.get(“SWEET_SPOT_MIN”,  “2”))   # sweet spot window start (days)
+SWEET_SPOT_MAX  = float(os.environ.get(“SWEET_SPOT_MAX”,  “7”))   # sweet spot window end (days)
 WATCH_HOURS     = float(os.environ.get(“WATCH_HOURS”,      “2”))  # 2. watching period before price alerts
 CONFIRM_POLLS   = int(os.environ.get(“CONFIRM_POLLS”,      “2”))  # 3. consecutive polls to confirm
 HOLDERS_PCT     = float(os.environ.get(“HOLDERS_PCT”,      “20”))  # 4. holders growth %
@@ -27,6 +31,20 @@ VOL_ACCEL_PCT   = float(os.environ.get(“VOL_ACCEL_PCT”,    “50”))  # 5. 
 NEW_TOKEN_HOURS = float(os.environ.get(“NEW_TOKEN_HOURS”,   “6”))  # 6. ignore price alerts < X hours old
 
 BINANCE_API = “https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list”
+
+# Binance official Telegram channels to monitor
+
+WATCH_CHANNELS = [
+“binance_announcements”,   # official Binance announcements
+“BinanceExchange”,         # Binance main channel
+]
+
+# Keywords that trigger an alert
+
+ALERT_KEYWORDS = [
+“alpha”, “new listing”, “spot listing”, “lists”, “listing”,
+“will list”, “is now available”, “spot trading”
+]
 
 # – State –
 
@@ -40,9 +58,12 @@ last_alerted_volume   = {}
 last_alerted_price    = {}
 last_alerted_holders  = {}
 alerted_graduated     = set()
+last_alerted_volmcap  = {}
+last_alerted_sweetspot = {}
 new_session_ids       = set()
 graduated_ids         = set()
-cnt_new = cnt_vol = cnt_price = cnt_momentum = cnt_grad = cnt_holders = 0
+cnt_new = cnt_vol = cnt_price = cnt_momentum = cnt_grad = cnt_holders = cnt_volmcap = cnt_sweetspot = cnt_announce = 0
+seen_announcement_ids = set()   # track message IDs so we don’t double-alert
 app = None
 
 # – Formatters –
@@ -375,6 +396,48 @@ for t in tokens:
             )
             log.info(f"HOLDERS: {sym} +{h_growth:.1f}%")
 
+    # -- Vol/Mcap ratio alert --
+    mcap = float(t.get("marketCap", 0) or 0)
+    if mcap > 0 and cur_v > 0:
+        vm_ratio = (cur_v / mcap) * 100
+        if vm_ratio >= VOL_MCAP_RATIO and is_cooled_down(last_alerted_volmcap, tid):
+            mark_alerted(last_alerted_volmcap, tid)
+            cnt_volmcap += 1
+            await send(
+                f"fire <b>VOL/MCAP SURGE</b>\n"
+                f"---\n"
+                f"Token: <b>{sym}</b> ({base.get('name','')})\n"
+                f"Listed on Alpha: {date_str(listed)} ({days_ago(listed)})\n\n"
+                f"Volume is <b>{vm_ratio:.0f}%</b> of market cap\n"
+                f"Vol: {fv(cur_v)} | MCap: {fv(mcap)}\n"
+                f"Price: {fp(cur_p)}\n\n"
+                f"High vol/mcap = intense buying relative to size\n"
+                f"chart <a href='{lk}'>Trade {sym} on Binance</a>\n"
+                f"clock {now_str()}"
+            )
+            log.info(f"VOL/MCAP: {sym} {vm_ratio:.0f}%")
+
+    # -- Sweet spot alert (2-7 days since listing) --
+    if listed:
+        age_days = (datetime.utcnow() - listed).total_seconds() / 86400
+        in_sweet_spot = SWEET_SPOT_MIN <= age_days <= SWEET_SPOT_MAX
+        if in_sweet_spot and vs and is_cooled_down(last_alerted_sweetspot, tid):
+            mark_alerted(last_alerted_sweetspot, tid)
+            cnt_sweetspot += 1
+            await send(
+                f"star <b>SWEET SPOT ALERT</b>\n"
+                f"---\n"
+                f"Token: <b>{sym}</b> ({base.get('name','')})\n"
+                f"Listed: {date_str(listed)}\n"
+                f"Age: <b>{age_days:.1f} days</b> (prime 2-7 day window)\n\n"
+                f"Volume spike during sweet spot window\n"
+                f"Vol: {fv(cur_v)} ({vr:.1f}x baseline)\n"
+                f"Price: {fp(cur_p)} ({fpct(pg)} from entry)\n\n"
+                f"chart <a href='{lk}'>Trade {sym} on Binance</a>\n"
+                f"clock {now_str()}"
+            )
+            log.info(f"SWEET SPOT: {sym} age={age_days:.1f}d")
+
     # Update holders baseline and prev volume
     baselines[tid]["holders"] = cur_h
     prev_volumes[tid] = cur_v
@@ -483,7 +546,9 @@ f” <b>Alpha Watch Status</b>\n”
 f”—————\n”
 f”Tracking: <b>{len(baselines)}</b> tokens\n”
 f”New: <b>{cnt_new}</b> | Vol: <b>{cnt_vol}</b> | Price: <b>{cnt_price}</b>\n”
-f”Momentum: <b>{cnt_momentum}</b> | Holders: <b>{cnt_holders}</b> | Grad: <b>{cnt_grad}</b>\n\n”
+f”Momentum: <b>{cnt_momentum}</b> | Holders: <b>{cnt_holders}</b>\n”
+f”Vol/MCap: <b>{cnt_volmcap}</b> | Sweet spot: <b>{cnt_sweetspot}</b>\n”
+f”Grad: <b>{cnt_grad}</b> | Announcements: <b>{cnt_announce}</b>\n\n”
 f” Poll: {POLL_INTERVAL}s | Confirm: {CONFIRM_POLLS} polls\n”
 f” Vol: {VOL_MULTIPLIER} | Min vol: {fv(MIN_VOL_USD)}\n”
 f” Price: +{PRICE_PCT}% | Watch: {WATCH_HOURS}h | Age: {NEW_TOKEN_HOURS}h\n”
@@ -571,6 +636,8 @@ f”Price pump: +{PRICE_PCT}%\n”
 f”Watch period: {WATCH_HOURS}h\n”
 f”New token age filter: {NEW_TOKEN_HOURS}h\n”
 f”Holders surge: +{HOLDERS_PCT}%\n”
+f”Vol/MCap ratio: {VOL_MCAP_RATIO}%\n”
+f”Sweet spot window: {SWEET_SPOT_MIN}-{SWEET_SPOT_MAX} days\n”
 f”Cool-down: {COOLDOWN_HOURS}h\n\n”
 f”Change in Railway env vars:\n”
 f”<code>MIN_MCAP  MIN_VOL_USD  VOL_MULTIPLIER  PRICE_PCT\n”
@@ -578,6 +645,68 @@ f”POLL_INTERVAL  COOLDOWN_HOURS  WATCH_HOURS\n”
 f”CONFIRM_POLLS  HOLDERS_PCT  VOL_ACCEL_PCT  NEW_TOKEN_HOURS</code>”,
 parse_mode=“HTML”
 )
+
+async def handle_channel_post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+“”“Monitor Binance announcement channels for listing news.”””
+global cnt_announce
+msg = update.channel_post or update.message
+if not msg or not msg.text:
+return
+
+```
+# Only process from Binance channels
+chat = msg.chat
+username = (chat.username or "").lower()
+if not any(ch.lower() in username for ch in WATCH_CHANNELS):
+    return
+
+# Deduplicate
+msg_id = f"{chat.id}:{msg.message_id}"
+if msg_id in seen_announcement_ids:
+    return
+seen_announcement_ids.add(msg_id)
+
+text = msg.text.lower()
+
+# Check for relevant keywords
+matched = [kw for kw in ALERT_KEYWORDS if kw in text]
+if not matched:
+    return
+
+cnt_announce += 1
+
+# Detect type
+if "alpha" in text:
+    icon = ""
+    alert_type = "BINANCE ALPHA ANNOUNCEMENT"
+elif "spot" in text or "listing" in text:
+    icon = ""
+    alert_type = "BINANCE SPOT LISTING"
+else:
+    icon = ""
+    alert_type = "BINANCE ANNOUNCEMENT"
+
+# Try to extract token symbol (usually in caps e.g. $BTC or ALL CAPS word)
+import re
+symbols = re.findall(r'\b[A-Z]{2,10}\b', msg.text)
+# Filter out common non-token words
+ignore = {"THE","AND","FOR","NEW","NOW","HAS","ARE","ALL","USD","USDT","BNB","YOU","CAN","THIS"}
+symbols = [s for s in symbols if s not in ignore]
+sym_line = f"Tokens mentioned: <b>{', '.join(symbols[:5])}</b>\n" if symbols else ""
+
+# Build preview (first 280 chars)
+preview = msg.text[:280] + ("..." if len(msg.text) > 280 else "")
+
+await send(
+    f"{icon} <b>{alert_type}</b>\n"
+    f"---\n"
+    f"{sym_line}"
+    f"\n{preview}\n\n"
+    f"Source: @{chat.username}\n"
+    f"clock {now_str()}"
+)
+log.info(f"ANNOUNCEMENT: {alert_type} from @{chat.username}")
+```
 
 async def main():
 global app
@@ -590,6 +719,9 @@ app.add_handler(CommandHandler(“price”,    cmd_price))
 app.add_handler(CommandHandler(“settings”, cmd_settings))
 
 ```
+# Monitor Binance announcement channels
+app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
+
 scheduler = AsyncIOScheduler()
 scheduler.add_job(poll_job,                  "interval", seconds=POLL_INTERVAL, id="poll")
 scheduler.add_job(refresh_volume_baselines,  "interval", hours=24,              id="vol_refresh")
